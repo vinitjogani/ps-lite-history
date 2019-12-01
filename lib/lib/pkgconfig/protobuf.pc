@@ -1,4 +1,4 @@
-prefix=/h/118/vjogani/ps-lite/deps
+prefix=/home/vnjogani/ps-lite/deps
 exec_prefix=${prefix}
 libdir=${exec_prefix}/lib
 includedir=${prefix}/include

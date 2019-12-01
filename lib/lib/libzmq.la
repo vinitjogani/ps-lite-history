@@ -17,7 +17,7 @@ old_library='libzmq.a'
 inherited_linker_flags=''
 
 # Libraries that this one depends upon.
-dependency_libs=' -lrt -lpthread'
+dependency_libs=' -lrt -lpthread /opt/gnu/gcc/lib/../lib64/libstdc++.la'
 
 # Names of additional weak libraries provided by this library
 weak_library_names=''
@@ -38,4 +38,4 @@ dlopen=''
 dlpreopen=''
 
 # Directory that this library needs to be installed in:
-libdir='/h/118/vjogani/ps-lite/deps/lib'
+libdir='/home/vnjogani/ps-lite/deps/lib'
