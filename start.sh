@@ -12,4 +12,4 @@ if [ "$DMLC_ROLE" = 'server' ]; then
     export HEAPPROFILE=./S0
 fi
 
-./main.out 
+./build/main.out 

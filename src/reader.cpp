@@ -19,7 +19,7 @@ Dataset<uint8_t> *read_mnist(int skip, int take) {
         exit(1);
     }
     fseek(images_fp, IMAGE_HEADER_SIZE + (NUM_FEATURES * skip), SEEK_SET);
-    fread(db->features, NUM_FEATURES*take, sizeof(uint8_t), images_fp);
+    fread(db->features, sizeof(uint8_t), NUM_FEATURES*take, images_fp);
     fclose(images_fp);
 
     FILE* labels_fp = fopen(MNIST_LABELS, "r");
@@ -28,8 +28,9 @@ Dataset<uint8_t> *read_mnist(int skip, int take) {
         exit(1);
     }
     fseek(labels_fp, LABEL_HEADER_SIZE + skip, SEEK_SET);
-    fread(db->labels, take, sizeof(uint8_t), labels_fp);
+    int num_records = fread(db->labels, sizeof(uint8_t), take, labels_fp);
     fclose(labels_fp);
+    db->setNumRecords(num_records);
 
     return db;
 }

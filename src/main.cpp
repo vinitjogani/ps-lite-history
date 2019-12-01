@@ -29,7 +29,7 @@ void RunWorker() {
 
     int per_worker = NUM_RECORDS / num_workers;
     MnistDataset *db = read_mnist(per_worker * rank, per_worker);
-
+    std::cout << db->getNumRecords() << " records loaded\n";
 }
 
 int main(int argc, char *argv[]) {
