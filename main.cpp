@@ -1,32 +1,35 @@
 #include <cmath>
 #include <iostream>
+#include <vector>
+#include <stdio.h>
 #include "ps/ps.h"
+
+#include "ps-history/reader.h"
+#include "ps-history/dataset.h"
 
 using namespace ps;
 
+#define MnistDataset Dataset<uint8_t>
+#define Weights std::vector<uint8_t>
+
+const int NUM_RECORDS = 100;
+
 void StartServer() {
-  if (!IsServer()) {
-    return;
-  }
-  auto server = new KVServer<float>(0);
-  server->set_request_handle(KVServerDefaultHandle<float>());
-  RegisterExitCallback([server](){ delete server; });
+    if (!IsServer()) return;
+
+    auto server = new KVServer<float>(0);
+    server->set_request_handle(KVServerDefaultHandle<float>());
+    RegisterExitCallback([server](){ delete server; });
 }
 
 void RunWorker() {
-  if (!IsWorker()) return;
+    if (!IsWorker()) return;
+    int rank = MyRank();
+    int num_workers = NumWorkers();
 
-    std::vector<uint64_t> key = { 1, 3, 5 };
-	std::vector<float> val = { 1, 1, 1 };
-	std::vector<float> recv_val;
-	ps::KVWorker<float> w(0,0);
-	w.Wait(w.Push(key, val));
-	w.Wait(w.Pull(key, &recv_val));
+    int per_worker = NUM_RECORDS / num_workers;
+    MnistDataset *db = read_mnist(per_worker * rank, per_worker);
 
-    for (auto i: recv_val) {
-        std::cout << i << ' ';
-    }
-    std::cout << '\n';
 }
 
 int main(int argc, char *argv[]) {
