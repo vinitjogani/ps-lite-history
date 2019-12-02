@@ -35,7 +35,7 @@ Dataset<T>::Dataset(int num_records, int num_features) {
 
 template <class T>
 T *Dataset<T>::getFeatures(int i) {
-    return this->features + (i * this.num_features);
+    return this->features + (i * this->num_features);
 }
 
 template <class T>

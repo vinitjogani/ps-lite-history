@@ -9,7 +9,10 @@ $(BUILD)/reader.o: $(SRC)/reader.cpp $(INCLUDE)/reader.h
 	g++ -Iinclude -c $< -std=c++11 -o $@
 
 $(BUILD)/main.o: $(SRC)/main.cpp 
-	g++ -Iinclude -c $< -std=c++11 -o $@
+	g++ -Iinclude -c $< -std=c++11 -o $@ 
+
+load:
+	module load boost
 
 clean:
 	rm $(BUILD)/*.o $(BUILD)/*.out
