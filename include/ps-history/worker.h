@@ -1,0 +1,1 @@
+void RunWorker(int rank, int num_workers);

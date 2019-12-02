@@ -1,10 +1,10 @@
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:lib
 
-killall main.out
-./start.sh scheduler &
-./start.sh server 0 &
-./start.sh server 1 &
-./start.sh server 2 &
-./start.sh worker 0 &
-./start.sh worker 1 &
-./start.sh worker 2
+killall $1.out
+./start.sh $1.out scheduler &
+./start.sh $1.out server 0 &
+./start.sh $1.out server 1 &
+./start.sh $1.out server 2 &
+./start.sh $1.out worker 0 &
+./start.sh $1.out worker 1 &
+./start.sh $1.out worker 2
