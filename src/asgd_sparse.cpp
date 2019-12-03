@@ -20,8 +20,8 @@ const double LR = 0.001;
 const int NUM_FEATURES = 784;
 const int BOUND = 2;
 
-double ComputeUpdate(double *update, double *W, 
-    SparseDataset *db, std::vector<int> &minibatch, double lr) {
+double ComputeUpdate(double *update, double *W, SparseDataset *db, 
+    std::vector<int> &minibatch, double lr) {
 
     int m = minibatch.size(), k = NUM_FEATURES;
     int ptrB[m], ptrE[m];
@@ -36,9 +36,8 @@ double ComputeUpdate(double *update, double *W,
     double pred[m];
     memset(pred, 0, sizeof(double)*m);
     
-    mkl_dcsrmv (&trans, &m, &k, &alpha, descrA, 
-        db->vals() + ptrB[0], db->cols() + ptrB[0], ptrB, ptrE, W, &beta, 
-        pred);
+    mkl_dcsrmv (&trans, &m, &k, &alpha, descrA, db->vals() + ptrB[0], 
+        db->cols() + ptrB[0], ptrB, ptrE, W, &beta, pred);
 
     int r, nz, idx;
     double error = 0;
@@ -50,10 +49,7 @@ double ComputeUpdate(double *update, double *W,
         pred[i] += W[NUM_FEATURES] - db->label(r);
         error += (pred[i] * pred[i]);
 
-        cblas_daxpyi(nz, -lr*pred[i], 
-            db->vals() + idx, db->cols() + idx, 
-            update);
-        
+        cblas_daxpyi(nz, -lr*pred[i], db->vals() + idx, db->cols() + idx, update);
         update[NUM_FEATURES] -= lr*pred[i];
     }
 
@@ -73,8 +69,8 @@ void RunWorker(int rank, int num_workers) {
     int per_worker = (NUM_RECORDS * 1.0 / num_workers);
     SparseDataset *db = SparseDataset::from(DATA_PATH, per_worker*rank, per_worker);
     
-    int num_records = db->num_records;
-    int minibatch_size = num_records * MINIBATCH_FRAC;
+    int num_records = db->num_records, minibatch_size = num_records * MINIBATCH_FRAC;
+    double error = 0;
     std::cout << num_records << " records loaded\n";
 
     std::vector<double> W (NUM_FEATURES + 1);
@@ -89,7 +85,7 @@ void RunWorker(int rank, int num_workers) {
         for (int i = 0; i < minibatch_size; i++)
             minibatch.push_back((rand() * 1.0) / RAND_MAX * (num_records - 1));
         
-        double error = ComputeUpdate(update.data(), W.data(), db, minibatch, LR / minibatch.size());
+        error = ComputeUpdate(update.data(), W.data(), db, minibatch, LR / minibatch.size());
 
         if (rank != 0) kv.Wait(kv.Push(weight_keys, update)); 
         else std::cout << "Iter[" << t <<  "] MSE: " << error << '\n';
@@ -100,7 +96,7 @@ void RunWorker(int rank, int num_workers) {
             if (*std::min_element(progress.begin(), progress.end()) >= t - BOUND) break;
             else sleep(1);
         }
-        std::vector<double> my_progress = {t*1.0};
+        std::vector<double> my_progress = {1.0};
         kv.Wait(kv.Push(my_rank, my_progress));
     }
 }
