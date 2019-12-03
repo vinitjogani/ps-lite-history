@@ -2,6 +2,7 @@
 #include <vector>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #include <boost/numeric/ublas/matrix.hpp>
 #include <boost/numeric/ublas/vector.hpp>
@@ -65,34 +66,40 @@ void RunWorker(int rank, int num_workers) {
     int last = 0;
     for (int t = 0; t < NUM_ITERS; t++) {
         kv.Pull(weight_keys.data(), &W.data());
-        kv.Wait(kv.Pull(sum_keys.data(), &Sum.data()));
+        kv.Pull(sum_keys.data(), &Sum.data());
 
         StdMatrix update (10, 785);
         update *= 0;
         int correct = 0;
 
-        for (int i = 0; i < minibatch_size; i++) {
-            int r = (rand() * 1.0) / RAND_MAX * (num_records - 1);
-            
-            StdKeys history_keys = weight_keys + (offset * (r+skip+1));
-            StdMatrix history (10, 785);
-            StdMatrix grad;
-            last = kv.Pull(history_keys.data(), &history.data());
-            correct += ComputeUpdate(grad, W, db, r, LR / minibatch_size);
-            kv.Wait(last);
-            history = (grad - history);
+        std::cout << rank << "Going in\n";
+        if (rank == 0) sleep(1);
 
-            update -= history;
+        for (int i = 0; i < minibatch_size; i++) {
+            
+            int r = (rand() * 1.0) / RAND_MAX * (num_records - 1);
+
+            StdMatrix history (10, 785);
+            StdKeys history_keys = weight_keys + (offset * (r+skip+1));
+            if (rank != 0) {
+                last = kv.Pull(history_keys.data(), &history.data());
+            }
+
+            StdMatrix grad;
+            correct += ComputeUpdate(grad, W, db, r, LR / minibatch_size);
             
             if (rank != 0) {
+                kv.Wait(last);            
+                history = (grad - history);
+                update -= history;
                 kv.Push(history_keys.data(), history.data());
                 kv.Push(sum_keys.data(), history.data());
             }
         }
-
+        std::cout << rank << "Coming out\n";
         if (rank != 0) {
             W += (update - MINIBATCH_FRAC*Sum);
-            last = kv.Push(weight_keys.data(), update.data());
+            kv.Wait(kv.Push(weight_keys.data(), update.data()));
         }
         else {
             double accuracy = correct * 1.0 / minibatch_size;
@@ -100,5 +107,5 @@ void RunWorker(int rank, int num_workers) {
         }
     }
     
-    kv.Wait(last);
+    // kv.Wait(last);
 }

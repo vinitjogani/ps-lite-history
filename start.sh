@@ -1,7 +1,7 @@
 bin=$1
 shift
 
-export DMLC_NUM_SERVER=3
+export DMLC_NUM_SERVER=2
 export DMLC_NUM_WORKER=3
 export DMLC_PS_ROOT_URI='127.0.0.1'
 export DMLC_PS_ROOT_PORT=8002
