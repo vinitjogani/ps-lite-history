@@ -8,13 +8,15 @@
 #include "ps/ps.h"
 #include "ps-history/reader.h"
 #include "ps-history/sparse_dataset.h"
+#include "ps-history/timer.h"
 #include "ps-history/worker.h"
 
 using namespace ps;
 
+const bool VALIDATE = true;
 const std::string DATA_PATH = "mnist.scale";
 const int NUM_RECORDS = 60000;
-const float MINIBATCH_FRAC = 0.3;
+const float MINIBATCH_FRAC = 0.1;
 const int NUM_ITERS = 50;
 const double LR = 0.001;
 const int NUM_FEATURES = 784;
@@ -51,7 +53,7 @@ double ComputeUpdate(double *update, double *W, SparseDataset *db,
 
         cblas_daxpyi(nz, -lr*pred[i], db->vals() + idx, db->cols() + idx, update);
         update[NUM_FEATURES] -= lr*pred[i];
-    }
+    }        
 
     return error / m;
 }
@@ -75,28 +77,46 @@ void RunWorker(int rank, int num_workers) {
 
     std::vector<double> W (NUM_FEATURES + 1);
     std::vector<double> update (NUM_FEATURES + 1);
-    std::vector<double> progress(num_workers);
+    std::vector<double> progress (num_workers);
+
+    Timer W_timer_init(TimerType::COMM);
+    kv.Wait(kv.Pull(weight_keys, &W));
+    W_timer_init.Stop();
 
     for (int t = 0; t < NUM_ITERS; t++) {
         memset(update.data(), 0, sizeof(double) * (NUM_FEATURES+1));
-        kv.Wait(kv.Pull(weight_keys, &W));
+        
+        Timer W_timer(TimerType::COMM_ASYNC);
+        kv.Pull(weight_keys, &W, nullptr, 0, [&]() { W_timer.Stop(); });
 
+        Timer comp_timer(TimerType::COMP);
         std::vector<int> minibatch;
         for (int i = 0; i < minibatch_size; i++)
             minibatch.push_back((rand() * 1.0) / RAND_MAX * (num_records - 1));
-        
         error = ComputeUpdate(update.data(), W.data(), db, minibatch, LR / minibatch.size());
+        comp_timer.Stop();
 
-        if (rank != 0) kv.Wait(kv.Push(weight_keys, update)); 
-        else std::cout << "Iter[" << t <<  "] MSE: " << error << '\n';
+        Timer update_timer(TimerType::COMM_ASYNC);
+        kv.Push(weight_keys, update, {}, 0, [&]() { update_timer.Stop(); }); 
+        if (rank == 0 && VALIDATE) std::cout << "Iter[" << t <<  "] MSE: " << error << '\n';
 
         while (true) {
             progress.clear();
+
+            Timer progress_timer(TimerType::COMM);
             kv.Wait(kv.Pull(rank_keys, &progress));
+            progress_timer.Stop();
+
             if (*std::min_element(progress.begin(), progress.end()) >= t - BOUND) break;
             else sleep(1);
         }
+
         std::vector<double> my_progress = {1.0};
+        Timer my_timer(TimerType::COMM);
         kv.Wait(kv.Push(my_rank, my_progress));
+        my_timer.Stop();
     }
+
+    std::cout << "Worker " << rank << " summary:\n";
+    Timer::PrintSummary();
 }

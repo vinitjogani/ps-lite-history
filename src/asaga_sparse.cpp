@@ -4,19 +4,22 @@
 #include <stdlib.h>
 #include <mkl.h>
 #include <unistd.h>
+#include <numeric>
 
 #include "ps/ps.h"
 #include "ps-history/reader.h"
 #include "ps-history/sparse_dataset.h"
+#include "ps-history/timer.h"
 #include "ps-history/worker.h"
 
 using namespace ps;
 
+const bool VALIDATE = true;
 const std::string DATA_PATH = "mnist.scale";
-const int NUM_RECORDS = 10000;
-const float MINIBATCH_FRAC = 0.3;
+const int NUM_RECORDS = 60000;
+const float MINIBATCH_FRAC = 0.1;
 const int NUM_ITERS = 50;
-const double LR = 0.01;
+const double LR = 0.003;
 const int NUM_FEATURES = 784;
 const int GRAD_DIM = NUM_FEATURES+1;
 const int BOUND = 2;
@@ -52,7 +55,10 @@ double ComputeUpdate(double *update, double *W, SparseDataset *db,
         int ho = history_offset + r*GRAD_DIM;
         std::iota(std::begin(history_keys), std::end(history_keys), ho);
         std::vector<double> history;
+
+        Timer history_timer(TimerType::HISTORY);
         kv.Wait(kv.Pull(history_keys, &history));
+        history_timer.Stop();
 
         pred[i] += W[NUM_FEATURES] - db->label(r);
         error += (pred[i] * pred[i]);
@@ -67,8 +73,15 @@ double ComputeUpdate(double *update, double *W, SparseDataset *db,
 
         cblas_dscal(GRAD_DIM, -1, history.data(), 1);
         // history = lr(new - old)
+
         kv.Wait(kv.Push(history_keys, history));
         kv.Wait(kv.Push(sum_keys, history));
+        history_timer.Stop();
+
+        // Timer history_push(TimerType::COMM_ASYNC);
+        // kv.Push(history_keys, history, {}, 0, [&, history]() {
+        //     kv.Push(sum_keys, history, {}, 0, [&]() {history_push.Stop();});
+        // });
     }
 
     return error / m;
@@ -102,31 +115,46 @@ void RunWorker(int rank, int num_workers) {
 
     for (int t = 0; t < NUM_ITERS; t++) {
         memset(update.data(), 0, sizeof(double) * (GRAD_DIM));
-        kv.Pull(weight_keys, &W);
+
+        Timer W_timer(TimerType::COMM_ASYNC);
+        kv.Pull(weight_keys, &W, nullptr, 0, [&]() { W_timer.Stop(); });
 
         std::vector<double> avg_vector;
+        Timer avg_timer(TimerType::COMM);
         kv.Wait(kv.Pull(sum_keys, &avg_vector));
+        avg_timer.Stop();        
         cblas_dscal(GRAD_DIM, -LR*MINIBATCH_FRAC, avg_vector.data(), 1);
 
+        Timer comp_timer(TimerType::COMP);
         std::vector<int> minibatch;
         for (int i = 0; i < minibatch_size; i++)
             minibatch.push_back((rand() * 1.0) / RAND_MAX * (num_records - 1));
-        
         error = ComputeUpdate(update.data(), W.data(), db, 
             minibatch, lr, sum_keys, 
             history_offset, kv, rank != 0);
         vdAdd(GRAD_DIM, update.data(), avg_vector.data(), update.data());
+        comp_timer.Stop();
 
-        if (rank != 0) kv.Wait(kv.Push(weight_keys, update)); 
-        else std::cout << "Iter[" << t <<  "] MSE: " << error << '\n';
+        Timer update_timer(TimerType::COMM_ASYNC);
+        kv.Push(weight_keys, update, {}, 0, [&]() { update_timer.Stop(); }); 
+        if (rank == 0 && VALIDATE) std::cout << "Iter[" << t <<  "] MSE: " << error << '\n';
 
         while (true) {
             progress.clear();
+            
+            Timer progress_timer(TimerType::COMM);
             kv.Wait(kv.Pull(rank_keys, &progress));
+            progress_timer.Stop();
+
             if (*std::min_element(progress.begin(), progress.end()) < t - BOUND) sleep(1);
             else break;
         }
         std::vector<double> my_progress = {1.0};
+        Timer my_timer(TimerType::COMM);
         kv.Wait(kv.Push(my_rank, my_progress));
+        my_timer.Stop();
     }
+
+    std::cout << "Worker " << rank << " summary:\n";
+    Timer::PrintSummary();
 }

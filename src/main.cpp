@@ -12,7 +12,7 @@ void StartServer() {
     RegisterExitCallback([server](){ delete server; });
 }
 
-int main(int argc, char *argv[]) {        
+int main(int argc, char *argv[]) {    
     // start system
     Start(0);
     // setup server nodes
