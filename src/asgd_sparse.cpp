@@ -13,6 +13,7 @@
 
 using namespace ps;
 
+const double SLEEP_INTERVAL = 200;
 const bool VALIDATE = true;
 const std::string DATA_PATH = "mnist.scale";
 const int NUM_RECORDS = 60000;
@@ -83,6 +84,7 @@ void RunWorker(int rank, int num_workers) {
     kv.Wait(kv.Pull(weight_keys, &W));
     W_timer_init.Stop();
 
+    int last = 0;
     for (int t = 0; t < NUM_ITERS; t++) {
         memset(update.data(), 0, sizeof(double) * (NUM_FEATURES+1));
         
@@ -97,19 +99,20 @@ void RunWorker(int rank, int num_workers) {
         comp_timer.Stop();
 
         Timer update_timer(TimerType::COMM_ASYNC);
-        kv.Push(weight_keys, update, {}, 0, [&]() { update_timer.Stop(); }); 
+        last = kv.Push(weight_keys, update, {}, 0, [&]() { update_timer.Stop(); }); 
         if (rank == 0 && VALIDATE) std::cout << "Iter[" << t <<  "] MSE: " << error << '\n';
 
+        Timer wait_timer(TimerType::WAITING);
         while (true) {
             progress.clear();
-
-            Timer progress_timer(TimerType::COMM);
             kv.Wait(kv.Pull(rank_keys, &progress));
-            progress_timer.Stop();
-
             if (*std::min_element(progress.begin(), progress.end()) >= t - BOUND) break;
-            else sleep(1);
+            else {
+                wait_timer.Sleep(SLEEP_INTERVAL/1000);
+                usleep(SLEEP_INTERVAL);
+            }
         }
+        wait_timer.Stop();
 
         std::vector<double> my_progress = {1.0};
         Timer my_timer(TimerType::COMM);
@@ -117,6 +120,7 @@ void RunWorker(int rank, int num_workers) {
         my_timer.Stop();
     }
 
+    kv.Wait(last);
     std::cout << "Worker " << rank << " summary:\n";
     Timer::PrintSummary();
 }
