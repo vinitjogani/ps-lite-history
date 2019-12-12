@@ -11,10 +11,11 @@
 #include "ps-history/sparse_dataset.h"
 #include "ps-history/timer.h"
 #include "ps-history/worker.h"
+#include "ps-history/async_controller.h"
+
 
 using namespace ps;
 
-const double SLEEP_INTERVAL = 200;
 const bool VALIDATE = true;
 const std::string DATA_PATH = "mnist.scale";
 const int NUM_RECORDS = 60000;
@@ -23,11 +24,10 @@ const int NUM_ITERS = 50;
 const double LR = 0.003;
 const int NUM_FEATURES = 784;
 const int GRAD_DIM = NUM_FEATURES+1;
-const int BOUND = 2;
 
 double ComputeUpdate(double *update, double *W, SparseDataset *db, 
     std::vector<int> &minibatch, double lr, std::vector<Key> &sum_keys, 
-    int history_offset, KVWorker<double> &kv, int push) {
+    int history_offset, KVWorker<double> &kv) {
 
     int m = minibatch.size(), k = NUM_FEATURES;
     int ptrB[m], ptrE[m];
@@ -63,7 +63,6 @@ double ComputeUpdate(double *update, double *W, SparseDataset *db,
 
         pred[i] += W[NUM_FEATURES] - db->label(r);
         error += (pred[i] * pred[i]);
-        if (!push) continue;
 
         cblas_daxpyi(nz, -lr*pred[i], db->vals() + idx, db->cols() + idx, history.data());
         history[NUM_FEATURES] -= lr*pred[i];
@@ -90,14 +89,12 @@ double ComputeUpdate(double *update, double *W, SparseDataset *db,
 }
 
 void RunWorker(int rank, int num_workers) {
-    std::vector<Key> weight_keys(GRAD_DIM);
-    std::iota(std::begin(weight_keys), std::end(weight_keys), 0);
-
-    std::vector<Key> my_rank = {(Key)(GRAD_DIM + rank)};
-    std::vector<Key> rank_keys(num_workers);
-    std::iota(std::begin(rank_keys), std::end(rank_keys), GRAD_DIM);
+    std::vector<Key> weight_keys;
+    for (int i = 0; i < GRAD_DIM; i++) weight_keys.push_back(i); 
     
     KVWorker<double> kv(0, rank);
+    AsyncController control(rank, num_workers, weight_keys.size(), kv);
+    
     int per_worker = (NUM_RECORDS * 1.0 / num_workers);
     int skip = per_worker*rank;
     SparseDataset *db = SparseDataset::from(DATA_PATH, skip, per_worker);
@@ -113,7 +110,10 @@ void RunWorker(int rank, int num_workers) {
 
     std::vector<double> W (GRAD_DIM);
     std::vector<double> update (GRAD_DIM);
-    std::vector<double> progress(num_workers);
+    
+    Timer W_timer(TimerType::COMM);
+    kv.Wait(kv.Pull(weight_keys, &W));
+    W_timer.Stop();
 
     int last = 0;
     for (int t = 0; t < NUM_ITERS; t++) {
@@ -134,7 +134,7 @@ void RunWorker(int rank, int num_workers) {
             minibatch.push_back((rand() * 1.0) / RAND_MAX * (num_records - 1));
         error = ComputeUpdate(update.data(), W.data(), db, 
             minibatch, lr, sum_keys, 
-            history_offset, kv, true);
+            history_offset, kv);
         vdAdd(GRAD_DIM, update.data(), avg_vector.data(), update.data());
         comp_timer.Stop();
 
@@ -143,21 +143,13 @@ void RunWorker(int rank, int num_workers) {
         if (rank == 0 && VALIDATE) std::cout << "Iter[" << t <<  "] MSE: " << error << '\n';
 
         Timer wait_timer(TimerType::WAITING);
-        while (true) {
-            progress.clear();
-            kv.Wait(kv.Pull(rank_keys, &progress));
-            if (*std::min_element(progress.begin(), progress.end()) < t - BOUND) {
-                wait_timer.Sleep(SLEEP_INTERVAL/1000);
-                usleep(SLEEP_INTERVAL);
-            }
-            else break;
-        }
+        double slept = control.CompleteIteration() / 1e+6;
+        wait_timer.Sleep(slept);
         wait_timer.Stop();
-
-        std::vector<double> my_progress = {1.0};
-        Timer my_timer(TimerType::COMM);
-        kv.Wait(kv.Push(my_rank, my_progress));
-        my_timer.Stop();
+        
+        W_timer.Start();
+        kv.Wait(kv.Pull(weight_keys, &W));
+        W_timer.Stop();
     }
 
     kv.Wait(last);

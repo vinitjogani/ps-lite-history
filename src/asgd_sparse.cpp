@@ -10,10 +10,11 @@
 #include "ps-history/sparse_dataset.h"
 #include "ps-history/timer.h"
 #include "ps-history/worker.h"
+#include "ps-history/async_controller.h"
 
 using namespace ps;
 
-const double SLEEP_INTERVAL = 200;
+
 const bool VALIDATE = true;
 const std::string DATA_PATH = "mnist.scale";
 const int NUM_RECORDS = 60000;
@@ -21,7 +22,6 @@ const float MINIBATCH_FRAC = 0.1;
 const int NUM_ITERS = 50;
 const double LR = 0.001;
 const int NUM_FEATURES = 784;
-const int BOUND = 2;
 
 double ComputeUpdate(double *update, double *W, SparseDataset *db, 
     std::vector<int> &minibatch, double lr) {
@@ -59,43 +59,37 @@ double ComputeUpdate(double *update, double *W, SparseDataset *db,
     return error / m;
 }
 
-void RunWorker(int rank, int num_workers) {
-    std::vector<Key> weight_keys(NUM_FEATURES + 1);
-    for (int i = 0; i < weight_keys.size(); i++) weight_keys[i] = i; 
 
-    std::vector<Key> my_rank(1);
-    my_rank[0] = weight_keys.size() + rank;
-    std::vector<Key> rank_keys(num_workers);
-    for (int i = 0; i < rank_keys.size(); i++) rank_keys[i] = weight_keys.size() + i;
+void RunWorker(int rank, int num_workers) {
+
+    std::vector<Key> weight_keys;
+    for (int i = 0; i < NUM_FEATURES+1; i++) weight_keys.push_back(i); 
     
     KVWorker<double> kv(0, rank);
+    AsyncController control(rank, num_workers, weight_keys.size(), kv);
+
     int per_worker = (NUM_RECORDS * 1.0 / num_workers);
     SparseDataset *db = SparseDataset::from(DATA_PATH, per_worker*rank, per_worker);
     
     int num_records = db->num_records, minibatch_size = num_records * MINIBATCH_FRAC;
-    double error = 0;
     std::cout << num_records << " records loaded\n";
 
     std::vector<double> W (NUM_FEATURES + 1);
     std::vector<double> update (NUM_FEATURES + 1);
-    std::vector<double> progress (num_workers);
 
-    Timer W_timer_init(TimerType::COMM);
+    Timer W_timer(TimerType::COMM);
     kv.Wait(kv.Pull(weight_keys, &W));
-    W_timer_init.Stop();
+    W_timer.Stop();
 
     int last = 0;
     for (int t = 0; t < NUM_ITERS; t++) {
         memset(update.data(), 0, sizeof(double) * (NUM_FEATURES+1));
-        
-        Timer W_timer(TimerType::COMM_ASYNC);
-        kv.Pull(weight_keys, &W, nullptr, 0, [&]() { W_timer.Stop(); });
 
         Timer comp_timer(TimerType::COMP);
         std::vector<int> minibatch;
         for (int i = 0; i < minibatch_size; i++)
             minibatch.push_back((rand() * 1.0) / RAND_MAX * (num_records - 1));
-        error = ComputeUpdate(update.data(), W.data(), db, minibatch, LR / minibatch.size());
+        double error = ComputeUpdate(update.data(), W.data(), db, minibatch, LR / minibatch.size());
         comp_timer.Stop();
 
         Timer update_timer(TimerType::COMM_ASYNC);
@@ -103,21 +97,13 @@ void RunWorker(int rank, int num_workers) {
         if (rank == 0 && VALIDATE) std::cout << "Iter[" << t <<  "] MSE: " << error << '\n';
 
         Timer wait_timer(TimerType::WAITING);
-        while (true) {
-            progress.clear();
-            kv.Wait(kv.Pull(rank_keys, &progress));
-            if (*std::min_element(progress.begin(), progress.end()) >= t - BOUND) break;
-            else {
-                wait_timer.Sleep(SLEEP_INTERVAL/1000);
-                usleep(SLEEP_INTERVAL);
-            }
-        }
+        double slept = control.CompleteIteration() / 1e+6;
+        wait_timer.Sleep(slept);
         wait_timer.Stop();
-
-        std::vector<double> my_progress = {1.0};
-        Timer my_timer(TimerType::COMM);
-        kv.Wait(kv.Push(my_rank, my_progress));
-        my_timer.Stop();
+        
+        W_timer.Start();
+        kv.Wait(kv.Pull(weight_keys, &W));
+        W_timer.Stop();
     }
 
     kv.Wait(last);

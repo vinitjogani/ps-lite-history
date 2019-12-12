@@ -2,7 +2,7 @@ INCLUDE  = include/ps-history
 SRC = src
 BUILD = build
 
-HEADERS = $(INCLUDE)/dataset.h $(INCLUDE)/worker.h $(INCLUDE)/reader.h $(INCLUDE)/sparse_dataset.h $(INCLUDE)/timer.h
+HEADERS = $(INCLUDE)/dataset.h $(INCLUDE)/worker.h $(INCLUDE)/reader.h $(INCLUDE)/sparse_dataset.h $(INCLUDE)/timer.h $(INCLUDE)/async_controller.h
 OBJECTS = $(BUILD)/main.o $(BUILD)/reader.o 
 
 all: $(BUILD)/asgd.out $(BUILD)/asgd_sparse.out $(BUILD)/asaga.out $(BUILD)/asaga_sparse.out
